@@ -1,0 +1,1 @@
+Adds the possibility of defining extra suffixes in the Pathauto module, like "edit", which extra aliases are generated for.

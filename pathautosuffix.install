@@ -1,0 +1,27 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * Install file for the pathauto suffix module
+ */
+
+/**
+ * Implementation of hook_install().
+ */
+function pathautosuffix_install() {
+  $weight = db_result(db_query("SELECT weight FROM {system} WHERE name = 'pathauto'"));
+  db_query("UPDATE {system} SET weight = %d WHERE name = 'pathautosuffix'", $weight + 10);
+}
+
+/**
+ * Implementation of hook_uninstall().
+ */
+function pathautosuffix_uninstall() {
+  db_query("SELECT name FROM {variable} WHERE name LIKE '%s%%'", array(
+    ':name' => 'pathautosuffix_'
+  ));
+  while ($variable = db_fetch_object($result)) {
+    variable_del($variable->name);
+  }
+}

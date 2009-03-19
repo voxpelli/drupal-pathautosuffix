@@ -1,0 +1,5 @@
+; $Id$
+name = Pathauto Suffixes
+description = Provides the possibility of custom prefixes like the one for feeds that's built into Pathauto
+dependencies[] = pathauto
+core = 6.x

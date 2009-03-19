@@ -1,0 +1,236 @@
+<?php
+// $Id$
+
+/**
+ * @file
+ * Adds customizable suffixes to pathauto
+ */
+
+/**
+ * Implementation of hook_form_alter().
+ */
+function pathautosuffix_form_alter(&$form, $form_state, $form_id) {
+  if ($form['#id'] === 'pathauto-admin-settings') {
+    $supported = array(
+      'node',
+      'taxonomy',
+    );
+    $all_settings = module_invoke_all('pathauto', 'settings');
+    foreach ($all_settings as $settings) {
+      $module = $settings->module;
+      if (!in_array($module, $supported)) {
+        continue;
+      }
+      $weight = -1000;
+      foreach ($form[$module] as $key => $value) {
+        $matches = array();
+        if (variable_get('pathautosuffix_'. $module .'_bulkupdate', FALSE)) {
+          variable_del('pathautosuffix_'. $module .'_bulkupdate');
+          //PELLE: Bulkupdate
+        }
+        if (preg_match('/^pathauto_[^_]+(?:_(\S+))?_pattern/i', $key, $matches)) {
+          $subtype = isset($matches[1]) ? $matches[1] : NULL;
+          $type = $module . ($subtype ? '_'. $subtype : '');
+          $current = (array) variable_get('pathautosuffix_'. $type .'_suffix', FALSE);
+
+          $form[$module][$key]['#weight'] = ++$weight;
+
+          $form[$module]['pathautosuffix_'. $type .'_suffix'] = array(
+            '#type'        => 'fieldset',
+            '#title'       => t('Suffixes for @type', array('@type' => $type)),
+            '#weight'      => ++$weight,
+            '#collapsible' => TRUE,
+            '#collapsed'   => TRUE,
+            '#tree'        => TRUE,
+            '#description' => t('More empty fields will appear when you save the suffixes.'),
+            '#element_validate' => array('_pathautosuffix_validate'),
+          );
+
+          $rows = array();
+          $length = count($current);
+          for ($i = 0; $i < $length; $i++) {
+            if (empty($current[$i])) {
+              continue;
+            }
+
+            $form[$module]['pathautosuffix_'. $type .'_suffix']['#collapsed'] = FALSE;
+
+            $current_row = $current[$i];
+            if (empty($current_row['alias'])) {
+              $current_row['alias'] = NULL;
+            }
+
+            $rows[] = array(
+              'suffix' => array(
+                '#type'          => 'textfield',
+                '#title'         => t('Suffix'),
+                '#size'          => 25,
+                '#default_value' => $current_row['suffix'],
+              ),
+              'alias' => array(
+                '#type'          => 'textfield',
+                '#title'         => t('Suffix\'s alias (may be left blank)'),
+                '#size'          => 25,
+                '#default_value' => $current_row['alias'],
+              ),
+            );
+          }
+          $rows[] = array(
+            'suffix' => array(
+              '#type'          => 'textfield',
+              '#title'         => t('Suffix'),
+              '#size'          => 25,
+            ),
+            'alias' => array(
+              '#type'          => 'textfield',
+              '#title'         => t('Suffix\'s alias (may be left blank)'),
+              '#size'          => 25,
+            ),
+          );
+          $form[$module]['pathautosuffix_'. $type .'_suffix'] += $rows;
+        }
+      }
+    }
+    $form['#submit'][] = '_pathautosuffix_submit';
+  }
+}
+
+function _pathautosuffix_validate($form, &$form_state) {
+  $non_empty = array();
+  $empty = array();
+
+  foreach ($form as $key => $value) {
+    if (is_numeric($key)) {
+      if (empty($value['suffix']['#value'])) {
+        $empty[] = $key;
+      }
+      else {
+        $non_empty[] = $key;
+      }
+    }
+  }
+
+  if (empty($non_empty)) {
+    form_set_value($form, NULL, $form_state);
+  }
+  else {
+    foreach ($empty as $key) {
+      form_set_value($form[$key], NULL, $form_state);
+    }
+  }
+}
+
+function _pathautosuffix_submit($form, &$form_state) {
+  //PELLE: Cleanup of existing aliases when removing/changing an alias
+  foreach ($form_state['values'] as $key => $value) {
+    $matches = array();
+    if (preg_match('/^pathauto_(\S+)_bulkupdate/i', $key, $matches)) {
+      $type = $matches[1];
+      if ($value) {
+        variable_set('pathautosuffix_'. $type .'_bulkupdate', TRUE);
+      }
+      else if (variable_get('pathautosuffix_'. $type .'_bulkupdate', FALSE)) {
+        variable_del('pathautosuffix_'. $module .'_bulkupdate');
+      }
+    }
+  }
+}
+
+/**
+ * Implementation of hook_nodeapi().
+ */
+function pathautosuffix_nodeapi(&$node, $op, $teaser, $page) {
+  if (in_array($op, array('insert', 'update', 'delete'))) {
+    $suffix = variable_get('pathautosuffix_node_'. $node->type .'_suffix', FALSE);
+    if (empty($suffix)) {
+      $suffix = variable_get('pathautosuffix_node_suffix', FALSE);
+    }
+  }
+
+  // Only do work if there's a suffix
+  if (empty($suffix)) {
+    return;
+  }
+
+  foreach ($suffix as $value) {
+    if (empty($value)) {
+      continue;
+    }
+
+    $src = "node/$node->nid";
+    $new_path  = $src .'/'. $value['suffix'];
+
+    switch ($op) {
+      case 'insert':
+      case 'update':
+        // Only create an alias if the checkbox was not provided or if the checkbox was provided and is checked
+        if (!isset($node->pathauto_perform_alias) || $node->pathauto_perform_alias) {
+          $alias = drupal_get_path_alias($src);
+          if ($src != $alias) {
+            $new_alias = $alias .'/'. (empty($value['alias']) ? $value['suffix'] : $value['alias']);
+            $pid = db_result(db_query("SELECT pid FROM {url_alias} WHERE src = '%s'", array(
+              ':src' => $new_path,
+            )));
+            path_set_alias($new_path, $new_alias, $pid ? $pid : NULL);
+          }
+        }
+        break;
+      case 'delete':
+        path_set_alias($new_path);
+        break;
+      default:
+        break;
+    }
+  }
+}
+
+/**
+ * Implementation of hook_taxonomy().
+ * Not [catpath] compatible
+ */
+function pathautosuffix_taxonomy($op, $type, $object = NULL) {
+  $category = (object) $object;
+
+  if ($type == 'term' && in_array($op, array('insert', 'update', 'delete'))) {
+    $suffix = variable_get('pathautosuffix_taxonomy_'. $category->vid .'_suffix', FALSE);
+    if (empty($suffix)) {
+      $suffix = variable_get('pathautosuffix_taxonomy_suffix', FALSE);
+    }
+  }
+
+  // Only do work if there's a suffix
+  if (empty($suffix)) {
+    return;
+  }
+
+  foreach ($suffix as $value) {
+    if (empty($value)) {
+      continue;
+    }
+
+    switch ($op) {
+      case 'insert':
+      case 'update':
+        // Use the category info to automatically create an alias
+        if ($category->name) {
+          $src = taxonomy_term_path($category);
+          $alias = drupal_get_path_alias($src);
+          if ($src != $alias) {
+            $new_path  = $src .'/'. $value['suffix'];
+            $new_alias = $alias .'/'. (empty($value['alias']) ? $value['suffix'] : $value['alias']);
+            $pid = db_result(db_query("SELECT pid FROM {url_alias} WHERE src = '%s'", array(
+              ':src' => $new_path,
+            )));
+            path_set_alias($new_path, $new_alias, $pid ? $pid : NULL);
+          }
+        }
+
+        break;
+      case 'delete':
+        path_set_alias('taxonomy/term/'. $category->tid .'/'. $value['suffix']);
+        break;
+      default:
+        break;
+    }
+  }
+}
