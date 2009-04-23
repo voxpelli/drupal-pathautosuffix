@@ -136,51 +136,61 @@ function _pathautosuffix_submit($form, &$form_state) {
   }
 }
 
-/**
- * Implementation of hook_nodeapi().
- */
-function pathautosuffix_nodeapi(&$node, $op, $teaser, $page) {
-  if (in_array($op, array('insert', 'update', 'delete'))) {
-    $suffix = variable_get('pathautosuffix_node_'. $node->type .'_suffix', FALSE);
-    if (empty($suffix)) {
-      $suffix = variable_get('pathautosuffix_node_suffix', FALSE);
-    }
+function _pathautosuffix_set_node_suffixes($nid, $type = NULL, $delete = FALSE) {
+  if (!empty($type)) {
+    $suffix = variable_get('pathautosuffix_node_'. $type .'_suffix', FALSE);
+  }
+  if (empty($suffix)) {
+    $suffix = variable_get('pathautosuffix_node_suffix', FALSE);
   }
 
-  // Only do work if there's a suffix
   if (empty($suffix)) {
     return;
   }
 
-  foreach ($suffix as $value) {
-    if (empty($value)) {
-      continue;
-    }
+  $src      = "node/$nid";
+  $alias    = drupal_get_path_alias($src);
 
-    $src = "node/$node->nid";
-    $new_path  = $src .'/'. $value['suffix'];
+  if ($src != $alias) {
+    foreach ($suffix as $value) {
+      if (empty($value)) {
+        continue;
+      }
 
-    switch ($op) {
-      case 'insert':
-      case 'update':
-        // Only create an alias if the checkbox was not provided or if the checkbox was provided and is checked
-        if (!isset($node->pathauto_perform_alias) || $node->pathauto_perform_alias) {
-          $alias = drupal_get_path_alias($src);
-          if ($src != $alias) {
-            $new_alias = $alias .'/'. (empty($value['alias']) ? $value['suffix'] : $value['alias']);
-            $pid = db_result(db_query("SELECT pid FROM {url_alias} WHERE src = '%s'", array(
-              ':src' => $new_path,
-            )));
-            path_set_alias($new_path, $new_alias, $pid ? $pid : NULL);
-          }
-        }
-        break;
-      case 'delete':
+      $new_path  = $src .'/'. $value['suffix'];
+      if (!$delete) {
+        $new_alias = $alias .'/'. (empty($value['alias']) ? $value['suffix'] : $value['alias']);
+
+        $pid = db_result(db_query("SELECT pid FROM {url_alias} WHERE src = '%s'", array(
+          ':src' => $new_path,
+        )));
+
+        path_set_alias($new_path, $new_alias, $pid ? $pid : NULL);
+      }
+      else {
         path_set_alias($new_path);
-        break;
-      default:
-        break;
+      }
     }
+  }
+}
+
+/**
+ * Implementation of hook_nodeapi().
+ */
+function pathautosuffix_nodeapi(&$node, $op, $teaser, $page) {
+  switch ($op) {
+    case 'insert':
+    case 'update':
+      // Only create an alias if the checkbox was not provided or if the checkbox was provided and is checked
+      if (!isset($node->pathauto_perform_alias) || $node->pathauto_perform_alias) {
+        _pathautosuffix_set_node_suffixes($node->nid, $node->type);
+      }
+      break;
+    case 'delete':
+      _pathautosuffix_set_node_suffixes($node->nid, $node->type, TRUE);
+      break;
+    default:
+      break;
   }
 }
 
@@ -189,6 +199,7 @@ function pathautosuffix_nodeapi(&$node, $op, $teaser, $page) {
  * Not [catpath] compatible
  */
 function pathautosuffix_taxonomy($op, $type, $object = NULL) {
+  //PELLE: Refactor this into a call to an abstracted api-function kind of style - as has already been done with the news
   $category = (object) $object;
 
   if ($type == 'term' && in_array($op, array('insert', 'update', 'delete'))) {
